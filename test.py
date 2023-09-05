@@ -11,8 +11,8 @@ protocol_names = {
 }
 
 # Define the allowed and blocked IP addresses
-allowed_ips = ["192.168.56.101", "192.168.70.98", "169.254.118.88", "169.254.9.237", "127.17.176.1", "172.30.16.1", "172.23.96.1", "192.168.56.1", "169.254.8.212"]
-blocked_ips = ["192.168.56.103", "10.0.0.2"]
+allowed_ips = [ "192.168.70.98", "169.254.118.88", "169.254.9.237", "127.17.176.1", "172.30.16.1", "172.23.96.1", "192.168.56.1", "169.254.8.212"]
+blocked_ips = ["192.168.56.101", "192.168.56.103", "10.0.0.2"]
 
 # Initialize variables to store statistics
 total_fwd_packets = 0
@@ -29,7 +29,7 @@ csv_file = "packet_data.csv"
 
 # Open the CSV file in write mode and define column headers
 with open(csv_file, mode="w", newline="") as file:
-    fieldnames = ["src_ip", "dst_ip", "protocol", "packet_length", "packets_per_minute"]
+    fieldnames = ["src_ip", "dst_ip", "protocol", "packet_length", "packets_per_minute", "status", "direction"]
     writer = csv.DictWriter(file, fieldnames=fieldnames)
 
     # Write the header row
@@ -46,13 +46,18 @@ with open(csv_file, mode="w", newline="") as file:
             protocol_num = packet[IP].proto
             protocol = protocol_names.get(protocol_num, "Unknown")
 
+            direction = "Incoming" if dst_ip in allowed_ips or dst_ip in blocked_ips else "Outgoing"
+
             if src_ip in allowed_ips:
-                print(f"Allowed packet from {src_ip} using protocol {protocol}")
+                status = "Allowed"
+                print(f"Allowed {direction} packet from {src_ip} using protocol {protocol}")
             elif src_ip in blocked_ips:
-                print(f"Blocked packet from {src_ip} using protocol {protocol}")
+                status = "Blocked"
                 block_ip(src_ip)
+                print(f"Blocked {direction} packet from {src_ip} using protocol {protocol}")
             else:
-                print(f"Unknown packet from {src_ip}, action: default")
+                status = "Unknown"
+                print(f"Unknown {direction} packet from {src_ip}, action: default")
 
             # Packet analysis for statistics
             total_fwd_packets += 1
@@ -68,8 +73,8 @@ with open(csv_file, mode="w", newline="") as file:
                 # Calculate packets per minute rate for each source IP
                 ppm = calculate_packets_per_minute(src_ip)
 
-                # Write packet data to the CSV file, including rounded PPM
-                writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm)})
+                # Write packet data to the CSV file, including rounded PPM, status, and direction
+                writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm), "status": status, "direction": direction})
 
     def block_ip(ip):
         # Define the command to block incoming traffic from the specified IP using iptables
