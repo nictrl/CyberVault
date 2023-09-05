@@ -1,6 +1,7 @@
-from scapy.all import *
 import subprocess
 import csv
+from scapy.all import *
+import time
 
 # Define a mapping of protocol numbers to their names
 protocol_names = {
@@ -15,35 +16,29 @@ blocked_ips = ["192.168.56.103", "10.0.0.2"]
 
 # Initialize variables to store statistics
 total_fwd_packets = 0
-total_bwd_packets = 0
 total_length_fwd_packets = 0
-total_length_bwd_packets = 0
 fwd_packet_length_max = float('-inf')
 fwd_packet_length_min = float('inf')
 fwd_packet_length_sum = 0
-bwd_packet_length_max = float('-inf')
-bwd_packet_length_min = float('inf')
-bwd_packet_length_sum = 0
 
-# Initialize protocol counters
-protocol_counters = {proto: 0 for proto in protocol_names.values()}
+# Initialize a dictionary to store packet timestamps for each source IP
+packet_timestamps = {}
 
 # Create a CSV file to store packet data
 csv_file = "packet_data.csv"
 
 # Open the CSV file in write mode and define column headers
 with open(csv_file, mode="w", newline="") as file:
-    fieldnames = ["src_ip", "dst_ip", "protocol", "packet_length"]
+    fieldnames = ["src_ip", "dst_ip", "protocol", "packet_length", "packets_per_minute"]
     writer = csv.DictWriter(file, fieldnames=fieldnames)
 
     # Write the header row
     writer.writeheader()
 
     def packet_handler(packet):
-        global total_fwd_packets, total_bwd_packets
-        global total_length_fwd_packets, total_length_bwd_packets
+        global total_fwd_packets
+        global total_length_fwd_packets
         global fwd_packet_length_max, fwd_packet_length_min, fwd_packet_length_sum
-        global bwd_packet_length_max, bwd_packet_length_min, bwd_packet_length_sum
 
         if packet.haslayer(IP):
             src_ip = packet[IP].src
@@ -51,15 +46,11 @@ with open(csv_file, mode="w", newline="") as file:
             protocol_num = packet[IP].proto
             protocol = protocol_names.get(protocol_num, "Unknown")
 
-            # Increment protocol counter
-            protocol_counters[protocol] += 1
-
-            if src_ip in blocked_ips:
+            if src_ip in allowed_ips:
+                print(f"Allowed packet from {src_ip} using protocol {protocol}")
+            elif src_ip in blocked_ips:
                 print(f"Blocked packet from {src_ip} using protocol {protocol}")
                 block_ip(src_ip)
-                return
-            elif src_ip in allowed_ips:
-                print(f"Allowed packet from {src_ip} using protocol {protocol}")
             else:
                 print(f"Unknown packet from {src_ip}, action: default")
 
@@ -74,8 +65,11 @@ with open(csv_file, mode="w", newline="") as file:
                 fwd_packet_length_min = min(fwd_packet_length_min, packet_length)
                 fwd_packet_length_sum += packet_length
 
-                # Write packet data to the CSV file for any of the three protocols
-                writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "packet_length": packet_length})
+                # Calculate packets per minute rate for each source IP
+                ppm = calculate_packets_per_minute(src_ip)
+
+                # Write packet data to the CSV file, including rounded PPM
+                writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm)})
 
     def block_ip(ip):
         # Define the command to block incoming traffic from the specified IP using iptables
@@ -85,6 +79,27 @@ with open(csv_file, mode="w", newline="") as file:
             print(f"Blocked incoming traffic from {ip}")
         except subprocess.CalledProcessError as e:
             print(f"Error blocking IP {ip}: {e}")
+
+    def calculate_packets_per_minute(ip):
+        timestamp = time.time()
+
+        # Check if the source IP is already in the dictionary
+        if ip in packet_timestamps:
+            # Calculate the time elapsed since the last packet from this IP
+            elapsed_time = timestamp - packet_timestamps[ip]
+
+            # Calculate the packets per minute rate
+            packets_per_minute = 60 / elapsed_time
+
+            # Update the timestamp for the source IP
+            packet_timestamps[ip] = timestamp
+
+            return packets_per_minute
+
+        else:
+            # If it's the first packet from this IP, add the timestamp
+            packet_timestamps[ip] = timestamp
+            return 0  # PPM is 0 for the first packet
 
     # Start capturing packets
     filter_expression = "ip"
@@ -96,9 +111,3 @@ print(f"Total Forward Packets: {total_fwd_packets}")
 print(f"Total Length of Forward Packets: {total_length_fwd_packets}")
 print(f"Forward Packet Length Max: {fwd_packet_length_max}")
 print(f"Forward Packet Length Min: {fwd_packet_length_min}")
-
-# Print protocol counters
-for protocol, count in protocol_counters.items():
-    print(f"Protocol {protocol}: {count} packets")
-
-# Add more statistics printing here as needed
