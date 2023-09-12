@@ -14,6 +14,10 @@ protocol_names = {
 allowed_ips = ["192.168.56.101", "192.168.70.98", "169.254.118.88", "169.254.9.237", "127.17.176.1", "172.30.16.1", "172.23.96.1", "192.168.56.1", "169.254.8.212"]
 blocked_ips = ["192.168.56.103", "10.0.0.2"]
 
+# Define the allowed and blocked ports
+allowed_ports = [(80, 443), 8080]
+blocked_ports = [22, 23]
+
 # Initialize variables to store statistics
 total_fwd_packets = 0
 total_length_fwd_packets = 0
@@ -29,7 +33,7 @@ csv_file = "packet_data.csv"
 
 # Open the CSV file in write mode and define column headers
 with open(csv_file, mode="w", newline="") as file:
-    fieldnames = ["src_ip", "dst_ip", "protocol", "packet_length", "packets_per_minute", "status"]
+    fieldnames = ["src_ip", "dst_ip", "src_port", "dst_port", "protocol", "packet_length", "packets_per_minute", "status"]
     writer = csv.DictWriter(file, fieldnames=fieldnames)
 
     # Write the header row
@@ -58,6 +62,29 @@ with open(csv_file, mode="w", newline="") as file:
             packet_timestamps[ip] = timestamp
             return 0  # PPM is 0 for the first packet
 
+    def get_source_and_dest_ports(packet):
+        src_port = None
+        dst_port = None
+
+        if packet.haslayer(TCP):
+            src_port = packet[TCP].sport
+            dst_port = packet[TCP].dport
+        elif packet.haslayer(UDP):
+            src_port = packet[UDP].sport
+            dst_port = packet[UDP].dport
+
+        return src_port, dst_port
+
+    def is_port_allowed(src_port, dst_port, protocol):
+        if (src_port, dst_port) in allowed_ports:
+            return True
+        elif src_port in allowed_ports or dst_port in allowed_ports:
+            return True
+        elif protocol == "TCP" and (src_port in blocked_ports or dst_port in blocked_ports):
+            return False
+        else:
+            return True
+
     def packet_handler(packet):
         global total_fwd_packets
         global total_length_fwd_packets
@@ -70,15 +97,35 @@ with open(csv_file, mode="w", newline="") as file:
             protocol = protocol_names.get(protocol_num, "Unknown")
 
             if src_ip in allowed_ips:
-                print(f"Allowed packet from {src_ip} using protocol {protocol}")
+                src_port, dst_port = get_source_and_dest_ports(packet)
+                if is_port_allowed(src_port, dst_port, protocol):
+                    print(f"Allowed packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
+                else:
+                    print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
+                    return
             elif src_ip in blocked_ips:
                 if dst_ip in allowed_ips:
-                    print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol} (Outgoing)")
-                    record_blocked_outgoing(src_ip, dst_ip, protocol)
+                    src_port, dst_port = get_source_and_dest_ports(packet)
+                    if is_port_allowed(src_port, dst_port, protocol):
+                        if protocol not in blocked_protocols:
+                            print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Outgoing)")
+                            record_blocked_outgoing(src_ip, dst_ip, protocol)
+                        else:
+                            print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Outgoing, Blocked Protocol)")
+                    else:
+                        if protocol not in blocked_protocols:
+                            print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
+                        else:
+                            print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Blocked)")
+                        return
                 else:
-                    print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol} (Outgoing)")
+                    print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol}")
             else:
-                print(f"Unknown packet from {src_ip}, action: default")
+                src_port, dst_port = get_source_and_dest_ports(packet)
+                if is_port_allowed(src_port, dst_port, protocol):
+                    print(f"Unknown packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}, action: default")
+                else:
+                    print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
 
                 # Packet analysis for statistics
                 total_fwd_packets += 1
@@ -95,7 +142,7 @@ with open(csv_file, mode="w", newline="") as file:
                     ppm = calculate_packets_per_minute(src_ip)
 
                     # Write packet data to the CSV file, including rounded PPM and status
-                    writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm), "status": "Blocked, Outgoing" if packet[IP].dst in allowed_ips else "Blocked"})
+                    writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "src_port": src_port, "dst_port": dst_port, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm), "status": "Blocked, Outgoing" if dst_ip in allowed_ips else "Blocked"})
 
     def block_ip(ip):
         if ip not in blocked_ips:
@@ -116,7 +163,7 @@ with open(csv_file, mode="w", newline="") as file:
             print(f"IP {ip} is already allowed.")
 
     def record_blocked_outgoing(src_ip, dst_ip, protocol):
-        writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "packet_length": 0, "packets_per_minute": 0, "status": "Blocked, Outgoing"})
+        writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "src_port": "", "dst_port": "", "protocol": protocol, "packet_length": 0, "packets_per_minute": 0, "status": "Blocked, Outgoing"})
 
     def display_lists():
         print("Allowed IPs:")
