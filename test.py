@@ -72,31 +72,30 @@ with open(csv_file, mode="w", newline="") as file:
             if src_ip in allowed_ips:
                 print(f"Allowed packet from {src_ip} using protocol {protocol}")
             elif src_ip in blocked_ips:
-                if packet[IP].dst in allowed_ips:
+                if dst_ip in allowed_ips:
                     print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol} (Outgoing)")
                     record_blocked_outgoing(src_ip, dst_ip, protocol)
                 else:
-                    print(f"Blocked packet from {src_ip} using protocol {protocol}")
-                return
+                    print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol} (Outgoing)")
             else:
                 print(f"Unknown packet from {src_ip}, action: default")
 
-            # Packet analysis for statistics
-            total_fwd_packets += 1
+                # Packet analysis for statistics
+                total_fwd_packets += 1
 
-            if packet.haslayer(UDP) or packet.haslayer(TCP) or packet.haslayer(ICMP):
-                # Check if it's any of the three protocols (UDP, TCP, ICMP)
-                packet_length = len(packet[IP])  # You can adjust this based on the desired packet length
-                total_length_fwd_packets += packet_length
-                fwd_packet_length_max = max(fwd_packet_length_max, packet_length)
-                fwd_packet_length_min = min(fwd_packet_length_min, packet_length)
-                fwd_packet_length_sum += packet_length
+                if packet.haslayer(UDP) or packet.haslayer(TCP) or packet.haslayer(ICMP):
+                    # Check if it's any of the three protocols (UDP, TCP, ICMP)
+                    packet_length = len(packet[IP])  # You can adjust this based on the desired packet length
+                    total_length_fwd_packets += packet_length
+                    fwd_packet_length_max = max(fwd_packet_length_max, packet_length)
+                    fwd_packet_length_min = min(fwd_packet_length_min, packet_length)
+                    fwd_packet_length_sum += packet_length
 
-                # Calculate packets per minute rate for each source IP
-                ppm = calculate_packets_per_minute(src_ip)
+                    # Calculate packets per minute rate for each source IP
+                    ppm = calculate_packets_per_minute(src_ip)
 
-                # Write packet data to the CSV file, including rounded PPM and status
-                writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm), "status": "Blocked, Outgoing" if packet[IP].dst in allowed_ips else "Blocked"})
+                    # Write packet data to the CSV file, including rounded PPM and status
+                    writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm), "status": "Blocked, Outgoing" if packet[IP].dst in allowed_ips else "Blocked"})
 
     def block_ip(ip):
         if ip not in blocked_ips:
@@ -147,8 +146,8 @@ with open(csv_file, mode="w", newline="") as file:
                 print("Starting packet capture...")
                 running = True
                 # Start capturing packets
-                filter_expression = "ip"
-                sniff(filter=filter_expression, iface="eth1", prn=packet_handler)
+                # filter_expression = "ip"
+                sniff(iface="eth0", prn=packet_handler)
             else:
                 print("The capture is already running.")
         elif user_input == 'pause':
