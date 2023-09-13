@@ -18,6 +18,8 @@ blocked_ips = ["192.168.56.103", "10.0.0.2"]
 allowed_ports = [(80, 443), 8080]
 blocked_ports = [22, 23]
 
+allowed_protocol = ["TCP"]
+
 # Initialize variables to store statistics
 total_fwd_packets = 0
 total_length_fwd_packets = 0
@@ -90,59 +92,65 @@ with open(csv_file, mode="w", newline="") as file:
         global total_length_fwd_packets
         global fwd_packet_length_max, fwd_packet_length_min, fwd_packet_length_sum
 
+        src_port, dst_port = get_source_and_dest_ports(packet)
+
+
         if packet.haslayer(IP):
             src_ip = packet[IP].src
             dst_ip = packet[IP].dst
             protocol_num = packet[IP].proto
             protocol = protocol_names.get(protocol_num, "Unknown")
 
-            if src_ip in allowed_ips:
-                src_port, dst_port = get_source_and_dest_ports(packet)
-                if is_port_allowed(src_port, dst_port, protocol):
-                    print(f"Allowed packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
-                else:
-                    print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
-                    return
-            elif src_ip in blocked_ips:
-                if dst_ip in allowed_ips:
+            if protocol in allowed_protocol:
+                if src_ip in allowed_ips:
                     src_port, dst_port = get_source_and_dest_ports(packet)
                     if is_port_allowed(src_port, dst_port, protocol):
-                        if protocol not in blocked_protocols:
-                            print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Outgoing)")
-                            record_blocked_outgoing(src_ip, dst_ip, protocol)
-                        else:
-                            print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Outgoing, Blocked Protocol)")
+                        print(f"Allowed packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
                     else:
-                        if protocol not in blocked_protocols:
-                            print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
-                        else:
-                            print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Blocked)")
+                        print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
                         return
+                elif src_ip in blocked_ips:
+                    if dst_ip in allowed_ips:
+                        src_port, dst_port = get_source_and_dest_ports(packet)
+                        if is_port_allowed(src_port, dst_port, protocol):
+                            if protocol not in blocked_protocols:
+                                print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Outgoing)")
+                                record_blocked_outgoing(src_ip, dst_ip, protocol)
+                            else:
+                                print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Outgoing, Blocked Protocol)")
+                        else:
+                            if protocol not in blocked_protocols:
+                                print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
+                            else:
+                                print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Blocked)")
+                            return
+                    else:
+                        print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol}")
                 else:
-                    print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol}")
+                    src_port, dst_port = get_source_and_dest_ports(packet)
+                    if is_port_allowed(src_port, dst_port, protocol):
+                        print(f"Packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}, action: default")
+                    else:
+                        print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
             else:
-                src_port, dst_port = get_source_and_dest_ports(packet)
-                if is_port_allowed(src_port, dst_port, protocol):
-                    print(f"Unknown packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}, action: default")
-                else:
-                    print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
+                print(f"Packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
 
-                # Packet analysis for statistics
-                total_fwd_packets += 1
+            # Packet analysis for statistics
+            total_fwd_packets += 1
 
-                if packet.haslayer(UDP) or packet.haslayer(TCP) or packet.haslayer(ICMP):
-                    # Check if it's any of the three protocols (UDP, TCP, ICMP)
-                    packet_length = len(packet[IP])  # You can adjust this based on the desired packet length
-                    total_length_fwd_packets += packet_length
-                    fwd_packet_length_max = max(fwd_packet_length_max, packet_length)
-                    fwd_packet_length_min = min(fwd_packet_length_min, packet_length)
-                    fwd_packet_length_sum += packet_length
+            if packet.haslayer(UDP) or packet.haslayer(TCP) or packet.haslayer(ICMP):
+                # Check if it's any of the three protocols (UDP, TCP, ICMP)
+                packet_length = len(packet[IP])  # You can adjust this based on the desired packet length
+                total_length_fwd_packets += packet_length
+                fwd_packet_length_max = max(fwd_packet_length_max, packet_length)
+                fwd_packet_length_min = min(fwd_packet_length_min, packet_length)
+                fwd_packet_length_sum += packet_length
 
-                    # Calculate packets per minute rate for each source IP
-                    ppm = calculate_packets_per_minute(src_ip)
+                # Calculate packets per minute rate for each source IP
+                ppm = calculate_packets_per_minute(src_ip)
 
-                    # Write packet data to the CSV file, including rounded PPM and status
-                    writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "src_port": src_port, "dst_port": dst_port, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm), "status": "Blocked, Outgoing" if dst_ip in allowed_ips else "Blocked"})
+                # Write packet data to the CSV file, including rounded PPM and status
+                writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "src_port": src_port, "dst_port": dst_port, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm), "status": "Blocked, Outgoing" if dst_ip in allowed_ips else "Blocked"})
 
     def block_ip(ip):
         if ip not in blocked_ips:
