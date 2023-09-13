@@ -18,7 +18,8 @@ blocked_ips = ["192.168.56.103", "10.0.0.2"]
 allowed_ports = [80, 8080]
 blocked_ports = [22, 23, 443]
 
-allowed_protocol = ["TCP"]
+allowed_protocols = ["TCP"]
+blocked_protocols = ["ICMP"]
 
 # Initialize variables to store statistics
 total_fwd_packets = 0
@@ -108,7 +109,7 @@ with open(csv_file, mode="w", newline="") as file:
             protocol_num = packet[IP].proto
             protocol = protocol_names.get(protocol_num, "Unknown")
 
-            if protocol in allowed_protocol:
+            if protocol in allowed_protocols:
                 if src_ip in allowed_ips:
                     src_port, dst_port = get_source_and_dest_ports(packet)
                     if is_port_allowed(src_port, dst_port, protocol):
@@ -208,6 +209,24 @@ with open(csv_file, mode="w", newline="") as file:
         else:
             print(f"PORT {port} is already blocked.")
 
+    def allow_protocol(protocol):
+        if protocol not in allowed_protocols:
+            allowed_protocols.append(protocol)
+            if protocol in blocked_protocols:
+                blocked_protocols.remove(protocol)
+            print(f"PROTOCOL {protocol} added to the allowed list.")
+        else:
+            print(f"PROTOCOL {protocol} is already allowed.")
+
+    def block_protocol(protocol):
+        if protocol not in blocked_protocols:
+            blocked_protocols.append(protocol)
+            if protocol in blocked_protocols:
+                allowed_protocols.remove(protocol)
+            print(f"PROTOCOL {protocol} added to the blocked list.")
+        else:
+            print(f"PROTOCOL {protocol} is already blocked.")
+
     def record_blocked_outgoing(src_ip, dst_ip, protocol):
         writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "src_port": "", "dst_port": "", "protocol": protocol, "packet_length": 0, "packets_per_minute": 0, "status": "Blocked, Outgoing"})
 
@@ -218,13 +237,18 @@ with open(csv_file, mode="w", newline="") as file:
         print("Blocked IPs:")
         for ip in blocked_ips:
             print(f"  {ip}")
-
         print("Allowed PORTs:")
         for port in allowed_ports:
             print(f"  {port}")
         print("Blocked PORTs:")
         for port in blocked_ports:
             print(f"  {port}")
+        print("Allowed PROTOCOLs:")
+        for protocol in allowed_protocols:
+            print(f"  {protocol}")
+        print("Blocked PROTOCOLs:")
+        for protocol in blocked_protocols:
+            print(f"  {protocol}")
 
     def display_help():
         print("Commands:")
@@ -232,10 +256,12 @@ with open(csv_file, mode="w", newline="") as file:
         print("  pause - Pause packet capture")
         print("  q - Quit")
         print("  h - Display help")
-        print("  allow <ip> - Allow traffic from the specified IP and remove it from the blocked list")
-        print("  block <ip> - Block traffic from the specified IP and remove it from the allowed list")
+        print("  allow_ip <ip> - Allow traffic from the specified IP and remove it from the blocked list")
+        print("  block_ip <ip> - Block traffic from the specified IP and remove it from the allowed list")
         print("  allow_port <port> - Allow traffic from the specified PORT and remove it from the blocked list")
         print("  block_port <port> - Block traffic from the specified PORT and remove it from the allowed list")
+        print("  allow_protocol <port> - Allow traffic from the specified PROTOCOL and remove it from the blocked list")
+        print("  block_protocol <port> - Block traffic from the specified PROTOCOL and remove it from the allowed list")
         print("  show - Display the lists of allowed and blocked IPs")
 
     display_help()
@@ -263,10 +289,10 @@ with open(csv_file, mode="w", newline="") as file:
             break
         elif user_input == 'h':
             display_help()
-        elif user_input.startswith('allow '):
+        elif user_input.startswith('allow_ip '):
             ip_to_allow = user_input.split(' ')[1]
             allow_ip(ip_to_allow)
-        elif user_input.startswith('block '):
+        elif user_input.startswith('block_ip '):
             ip_to_block = user_input.split(' ')[1]
             block_ip(ip_to_block)
         elif user_input.startswith('allow_port '):
@@ -275,6 +301,12 @@ with open(csv_file, mode="w", newline="") as file:
         elif user_input.startswith('block_port '):
             port_to_block = user_input.split(' ')[1]
             block_port(port_to_block)
+        elif user_input.startswith('allow_protocol '):
+            protocol_to_allow = user_input.split(' ')[1]
+            allow_protocol(protocol_to_allow)
+        elif user_input.startswith('block_protocol '):
+            protocol_to_block = user_input.split(' ')[1]
+            block_protocol(protocol_to_block)
         elif user_input == 'show':
             display_lists()
         else:
