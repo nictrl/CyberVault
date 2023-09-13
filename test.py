@@ -15,8 +15,8 @@ allowed_ips = ["192.168.56.101", "192.168.70.98", "169.254.118.88", "169.254.9.2
 blocked_ips = ["192.168.56.103", "10.0.0.2"]
 
 # Define the allowed and blocked ports
-allowed_ports = [(80, 443), 8080]
-blocked_ports = [22, 23]
+allowed_ports = [80, 8080]
+blocked_ports = [22, 23, 443]
 
 allowed_protocol = ["TCP"]
 
@@ -92,8 +92,15 @@ with open(csv_file, mode="w", newline="") as file:
         global total_length_fwd_packets
         global fwd_packet_length_max, fwd_packet_length_min, fwd_packet_length_sum
 
-        src_port, dst_port = get_source_and_dest_ports(packet)
+        src_port = None
+        dst_port = None
 
+        if packet.haslayer(TCP):
+            src_port = packet[TCP].sport
+            dst_port = packet[TCP].dport
+        elif packet.haslayer(UDP):
+            src_port = packet[UDP].sport
+            dst_port = packet[UDP].dport
 
         if packet.haslayer(IP):
             src_ip = packet[IP].src
@@ -108,10 +115,10 @@ with open(csv_file, mode="w", newline="") as file:
                         print(f"Allowed packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
                     else:
                         print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
-                        return
+                        status = "Blocked"
                 elif src_ip in blocked_ips:
                     if dst_ip in allowed_ips:
-                        src_port, dst_port = get_source_and_dest_ports(packet)
+                        #src_port, dst_port = get_source_and_dest_ports(packet)
                         if is_port_allowed(src_port, dst_port, protocol):
                             if protocol not in blocked_protocols:
                                 print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Outgoing)")
@@ -123,17 +130,21 @@ with open(csv_file, mode="w", newline="") as file:
                                 print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
                             else:
                                 print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Blocked)")
-                            return
+                            status = "Blocked"
                     else:
                         print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol}")
+                        status = "Blocked"
                 else:
-                    src_port, dst_port = get_source_and_dest_ports(packet)
+                    #src_port, dst_port = get_source_and_dest_ports(packet)
                     if is_port_allowed(src_port, dst_port, protocol):
                         print(f"Packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}, action: default")
+                        status = "Default"
                     else:
                         print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
+                        status = "Blocked"
             else:
                 print(f"Packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
+                status = "Default"
 
             # Packet analysis for statistics
             total_fwd_packets += 1
@@ -150,7 +161,16 @@ with open(csv_file, mode="w", newline="") as file:
                 ppm = calculate_packets_per_minute(src_ip)
 
                 # Write packet data to the CSV file, including rounded PPM and status
-                writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "src_port": src_port, "dst_port": dst_port, "protocol": protocol, "packet_length": packet_length, "packets_per_minute": round(ppm), "status": "Blocked, Outgoing" if dst_ip in allowed_ips else "Blocked"})
+                writer.writerow({
+                    "src_ip": src_ip,
+                    "dst_ip": dst_ip,
+                    "src_port": src_port,
+                    "dst_port": dst_port,
+                    "protocol": protocol,
+                    "packet_length": packet_length,
+                    "packets_per_minute": round(ppm),
+                    "status": status
+                })
 
     def block_ip(ip):
         if ip not in blocked_ips:
@@ -170,6 +190,24 @@ with open(csv_file, mode="w", newline="") as file:
         else:
             print(f"IP {ip} is already allowed.")
 
+    def allow_port(port):
+        if port not in allowed_ports:
+            allowed_ports.append(port)
+            if port in blocked_ports:
+                blocked_ports.remove(port)
+            print(f"PORT {port} added to the allowed list.")
+        else:
+            print(f"PORT {port} is already allowed.")
+
+    def block_port(port):
+        if port not in blocked_ports:
+            blocked_ports.append(port)
+            if port in allowed_ports:
+                allowed_ports.remove(port)
+            print(f"PORT {port} added to the blocked list.")
+        else:
+            print(f"PORT {port} is already blocked.")
+
     def record_blocked_outgoing(src_ip, dst_ip, protocol):
         writer.writerow({"src_ip": src_ip, "dst_ip": dst_ip, "src_port": "", "dst_port": "", "protocol": protocol, "packet_length": 0, "packets_per_minute": 0, "status": "Blocked, Outgoing"})
 
@@ -181,6 +219,13 @@ with open(csv_file, mode="w", newline="") as file:
         for ip in blocked_ips:
             print(f"  {ip}")
 
+        print("Allowed PORTs:")
+        for port in allowed_ports:
+            print(f"  {port}")
+        print("Blocked PORTs:")
+        for port in blocked_ports:
+            print(f"  {port}")
+
     def display_help():
         print("Commands:")
         print("  start - Start packet capture")
@@ -189,6 +234,8 @@ with open(csv_file, mode="w", newline="") as file:
         print("  h - Display help")
         print("  allow <ip> - Allow traffic from the specified IP and remove it from the blocked list")
         print("  block <ip> - Block traffic from the specified IP and remove it from the allowed list")
+        print("  allow_port <port> - Allow traffic from the specified PORT and remove it from the blocked list")
+        print("  block_port <port> - Block traffic from the specified PORT and remove it from the allowed list")
         print("  show - Display the lists of allowed and blocked IPs")
 
     display_help()
@@ -222,6 +269,12 @@ with open(csv_file, mode="w", newline="") as file:
         elif user_input.startswith('block '):
             ip_to_block = user_input.split(' ')[1]
             block_ip(ip_to_block)
+        elif user_input.startswith('allow_port '):
+            port_to_allow = user_input.split(' ')[1]
+            allow_port(port_to_allow)
+        elif user_input.startswith('block_port '):
+            port_to_block = user_input.split(' ')[1]
+            block_port(port_to_block)
         elif user_input == 'show':
             display_lists()
         else:
