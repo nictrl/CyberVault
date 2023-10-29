@@ -15,6 +15,7 @@ import socket
 import statistics
 import time
 import joblib
+from datetime import datetime
 
 model = keras.models.load_model('/home/kali/CyberVault/CyberVault_IDS_Model/CyberVault_IDS')
 
@@ -71,9 +72,13 @@ up_count = 0
 active_times = []
 idle_times = []
 
+consecutive_classify = {}
+
+mode = "normal"
+
 def process_packet(packet):
     
-    global df, model, label_encoder, scaler, total_fwd_length, total_bwd_length, fwd_lengths, bwd_lengths, start_time, total_bytes, last_pkt_time, total_pkts, last_pkt_count_time, fwd_IAT_total, bwd_IAT_total, SYN_flag_count, RST_flag_count, PSH_flag_count, ACK_flag_count, down_count, up_count, active_times, idle_times 
+    global df, model, label_encoder, scaler, total_fwd_length, total_bwd_length, fwd_lengths, bwd_lengths, start_time, total_bytes, last_pkt_time, total_pkts, last_pkt_count_time, fwd_IAT_total, bwd_IAT_total, SYN_flag_count, RST_flag_count, PSH_flag_count, ACK_flag_count, down_count, up_count, active_times, idle_times, consecutive_classify, mode 
     
     if TCP in packet:
         flags = packet[TCP].flags
@@ -269,7 +274,42 @@ def process_packet(packet):
     
     print(f"Predicted Label: {predicted_label}")
     
+    if mode == "aggressive":
+        if IP in packet:
+            src_ip = packet[IP].src
+            if not (predicted_label[-1] == "BENIGN"):
+                if src_ip in consecutive_classify:
+                    if consecutive_classify[src_ip]['prev_class'] == predicted_label[-1]:
+                        consecutive_classify[src_ip]['count'] += 1
+                        if consecutive_classify[src_ip]['count'] >= 5:
+                            # Inform the user of the attack (aggressive mode)
+                            print(f"Consecutive malicious predictions from {src_ip} - Possible attack!")
+                    else:
+                        consecutive_classify[src_ip]['prev_class'] = predicted_label[-1]
+                        consecutive_classify[src_ip]['count'] = 1
+                else:
+                    # This is the first classification for this IP
+                    consecutive_classify[src_ip] = {'prev_class': predicted_label[-1], 'count': 1}
+
+    if mode == "normal":
+        if IP in packet:
+            src_ip = packet[IP].src
+            if not (predicted_label[-1] == "BENIGN"):
+                if src_ip in consecutive_classify:
+                    if consecutive_classify[src_ip]['prev_class'] == predicted_label[-1]:
+                        consecutive_classify[src_ip]['count'] += 1
+                        if consecutive_classify[src_ip]['count'] >= 10:
+                            # Inform the user of the attack (normal mode)
+                            print(f"Consecutive malicious predictions from {src_ip} - Possible attack!")
+                    else:
+                        consecutive_classify[src_ip]['prev_class'] = predicted_label[-1]
+                        consecutive_classify[src_ip]['count'] = 1
+                else:
+                    # This is the first classification for this IP
+                    consecutive_classify[src_ip] = {'prev_class': predicted_label[-1], 'count': 1}
+    
     with open("IDS_output.txt", "w") as file:
+    	file.write(datetime.now().strftime("%d/%m/%Y, %H:%M:%S\n"))
     	file.write(f"Predicted Label: {predicted_label}")
 
 interface = "eth0"  # Change this to the appropriate interface
