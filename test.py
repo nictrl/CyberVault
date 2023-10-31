@@ -36,13 +36,56 @@ csv_file = "packet_data.csv"
 
 # Open the CSV file in write mode and define column headers
 with open(csv_file, mode="w", newline="") as file:
-    fieldnames = ["src_ip", "dst_ip", "src_port", "dst_port", "protocol", "packet_length", "packets_per_minute", "status"]
+    fieldnames = [
+        "src_ip", "dst_ip", "src_port", "dst_port", "protocol", "packet_length", "packets_per_minute", "status",
+        "flow_duration", "syn_flag", "rst_flag", "psh_flag", "ack_flag",
+        "iat_mean", "iat_std", "iat_max", "iat_min",
+        "fwd_iat_total", "fwd_iat_mean", "fwd_iat_std", "fwd_iat_max", "fwd_iat_min",
+        "bwd_iat_total", "bwd_iat_mean", "bwd_iat_std", "bwd_iat_max", "bwd_iat_min",
+        "down_up_ratio",
+        "avg_packet_size", "avg_fwd_segment_size", "avg_bwd_segment_size",
+        "fwd_header_length", "bwd_header_length",
+        "active_mean", "active_std", "active_max", "active_min",
+        "idle_mean", "idle_std", "idle_max", "idle_min"
+    ]
     writer = csv.DictWriter(file, fieldnames=fieldnames)
 
     # Write the header row
     writer.writeheader()
 
     running = False
+
+    # Initialize a dictionary to store the last packet time for each flow (source IP, destination IP, source port, destination port)
+    last_packet_time = {}
+
+    def calculate_inter_arrival_time(packet):
+        src_ip = packet[IP].src
+        dst_ip = packet[IP].dst
+        flow_key = f"{src_ip}:{dst_ip}"
+
+        if flow_key not in last_packet_time:
+            last_packet_time[flow_key] = time.time()
+            return 0  # No previous packet, IAT is 0
+
+        current_time = time.time()
+        iat = current_time - last_packet_time[flow_key]
+        last_packet_time[flow_key] = current_time
+
+        return iat
+
+    def calculate_flow_duration(packet):
+        src_ip = packet[IP].src
+        dst_ip = packet[IP].dst
+        flow_key = (src_ip, dst_ip)
+
+        if flow_key in last_packet_time:
+            last_time = last_packet_time[flow_key]
+            current_time = time.time()
+            flow_duration = current_time - last_time
+            return flow_duration
+        else:
+            last_packet_time[flow_key] = time.time()
+            return 0  # Return 0 for the first packet in the flow
 
     def calculate_packets_per_minute(ip):
         timestamp = time.time()
@@ -88,6 +131,20 @@ with open(csv_file, mode="w", newline="") as file:
         else:
             return True
 
+    def count_tcp_flags(packet):
+        syn_flag = packet[TCP].flags & 0x02  # Check if SYN flag is set
+        rst_flag = packet[TCP].flags & 0x04  # Check if RST flag is set
+        psh_flag = packet[TCP].flags & 0x08  # Check if PSH flag is set
+        ack_flag = packet[TCP].flags & 0x10  # Check if ACK flag is set
+
+        return syn_flag, rst_flag, psh_flag, ack_flag
+
+    def calculate_packet_sizes(packet):
+        fwd_segment_size = len(packet[IP])
+        bwd_segment_size = 0  # Assuming it's the backward direction
+
+        return fwd_segment_size, bwd_segment_size
+
     def packet_handler(packet):
         global total_fwd_packets
         global total_length_fwd_packets
@@ -95,19 +152,22 @@ with open(csv_file, mode="w", newline="") as file:
 
         src_port = None
         dst_port = None
+        syn_flag = 0  # Initialize syn_flag with a default value
+        rst_flag = 0  # Initialize rst_flag with a default value
+        psh_flag = 0  # Initialize psh_flag with a default value
+        ack_flag = 0  # Initialize ack_flag with a default value
 
         if packet.haslayer(TCP):
             src_port = packet[TCP].sport
             dst_port = packet[TCP].dport
-        elif packet.haslayer(UDP):
-            src_port = packet[UDP].sport
-            dst_port = packet[UDP].dport
+            syn_flag, rst_flag, psh_flag, ack_flag = count_tcp_flags(packet)
 
         if packet.haslayer(IP):
             src_ip = packet[IP].src
             dst_ip = packet[IP].dst
             protocol_num = packet[IP].proto
             protocol = protocol_names.get(protocol_num, "Unknown")
+            status = "Default"  # Default status
 
             if protocol in allowed_protocols:
                 if src_ip in allowed_ips:
@@ -119,7 +179,7 @@ with open(csv_file, mode="w", newline="") as file:
                         status = "Blocked"
                 elif src_ip in blocked_ips:
                     if dst_ip in allowed_ips:
-                        #src_port, dst_port = get_source_and_dest_ports(packet)
+                        src_port, dst_port = get_source_and_dest_ports(packet)
                         if is_port_allowed(src_port, dst_port, protocol):
                             if protocol not in blocked_protocols:
                                 print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol} (Outgoing)")
@@ -136,10 +196,9 @@ with open(csv_file, mode="w", newline="") as file:
                         print(f"Blocked packet from {src_ip} to {dst_ip} using protocol {protocol}")
                         status = "Blocked"
                 else:
-                    #src_port, dst_port = get_source_and_dest_ports(packet)
+                    src_port, dst_port = get_source_and_dest_ports(packet)
                     if is_port_allowed(src_port, dst_port, protocol):
                         print(f"Packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}, action: default")
-                        status = "Default"
                     else:
                         print(f"Blocked packet from {src_ip}:{src_port} to {dst_ip}:{dst_port} using protocol {protocol}")
                         status = "Blocked"
@@ -161,7 +220,6 @@ with open(csv_file, mode="w", newline="") as file:
                 # Calculate packets per minute rate for each source IP
                 ppm = calculate_packets_per_minute(src_ip)
 
-                # Write packet data to the CSV file, including rounded PPM and status
                 writer.writerow({
                     "src_ip": src_ip,
                     "dst_ip": dst_ip,
@@ -169,9 +227,44 @@ with open(csv_file, mode="w", newline="") as file:
                     "dst_port": dst_port,
                     "protocol": protocol,
                     "packet_length": packet_length,
-                    "packets_per_minute": round(ppm),
-                    "status": status
+                    "packets_per_minute": round(calculate_packets_per_minute(src_ip)),
+                    "status": status,
+                    "flow_duration": calculate_flow_duration(packet),
+                    "syn_flag": syn_flag,
+                    "rst_flag": rst_flag,
+                    "psh_flag": psh_flag,
+                    "ack_flag": ack_flag,
+                    "iat_mean": calculate_inter_arrival_time(packet),
+                    "iat_std": 0,  # Update this based on your calculation
+                    "iat_max": 0,  # Update this based on your calculation
+                    "iat_min": 0,  # Update this based on your calculation
+                    "fwd_iat_total": 0,  # Update this based on your calculation
+                    "fwd_iat_mean": 0,  # Update this based on your calculation
+                    "fwd_iat_std": 0,  # Update this based on your calculation
+                    "fwd_iat_max": 0,  # Update this based on your calculation
+                    "fwd_iat_min": 0,  # Update this based on your calculation
+                    "bwd_iat_total": 0,  # Update this based on your calculation
+                    "bwd_iat_mean": 0,  # Update this based on your calculation
+                    "bwd_iat_std": 0,  # Update this based on your calculation
+                    "bwd_iat_max": 0,  # Update this based on your calculation
+                    "bwd_iat_min": 0,  # Update this based on your calculation
+                    "down_up_ratio": 0,  # Update this based on your calculation
+                    "avg_packet_size": 0,  # Update this based on your calculation
+                    "avg_fwd_segment_size": 0,  # Update this based on your calculation
+                    "avg_bwd_segment_size": 0,  # Update this based on your calculation
+                    "fwd_header_length": 0,  # Update this based on your calculation
+                    "bwd_header_length": 0,  # Update this based on your calculation
+                    "active_mean": 0,  # Update this based on your calculation
+                    "active_std": 0,  # Update this based on your calculation
+                    "active_max": 0,  # Update this based on your calculation
+                    "active_min": 0,  # Update this based on your calculation
+                    "idle_mean": 0,  # Update this based on your calculation
+                    "idle_std": 0,  # Update this based on your calculation
+                    "idle_max": 0,  # Update this based on your calculation
+                    "idle_min": 0  # Update this based on your calculation
                 })
+
+    # Rest of the code remains the same
 
     def block_ip(ip):
         if ip not in blocked_ips:
