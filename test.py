@@ -34,6 +34,9 @@ packet_timestamps = {}
 # Create a CSV file to store packet data
 csv_file = "packet_data.csv"
 
+# Enable IP forwarding
+subprocess.run(["sysctl", "net.ipv4.ip_forward=1"])
+
 # Open the CSV file in write mode and define column headers
 with open(csv_file, mode="w", newline="") as file:
     fieldnames = [
@@ -358,7 +361,11 @@ with open(csv_file, mode="w", newline="") as file:
         print("  show - Display the lists of allowed and blocked IPs")
 
     display_help()
+	
 
+    subprocess.run(["iptables", "-t", "nat", "-A", "POSTROUTING", "-o", "wlan0", "-j", "MASQUERADE"])
+    subprocess.run(["ip", "route", "add", "0.0.0.0/0", "via", "192.168.70.68"])
+	
     while True:
         user_input = input("Enter a command: ")
 
@@ -368,7 +375,7 @@ with open(csv_file, mode="w", newline="") as file:
                 running = True
                 # Start capturing packets
                 # filter_expression = "ip"
-                sniff(iface="eth0", prn=packet_handler)
+                sniff(iface="wlan0", prn=packet_handler)
             else:
                 print("The capture is already running.")
         elif user_input == 'pause':
